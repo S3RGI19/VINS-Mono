@@ -311,7 +311,16 @@ void process()
                 xyz_uv_velocity << x, y, z, p_u, p_v, velocity_x, velocity_y;
                 image[feature_id].emplace_back(camera_id,  xyz_uv_velocity);
             }
+            // ROS_DEBUG("image size %lu", image.size());
+            // print img timestamp in ros debug
+            ROS_WARN("Before processImage");
+            // precesion9
+            std::ostringstream oss;
+            oss << std::fixed << std::setprecision(9) << img_msg->header.stamp.toSec();
+            ROS_DEBUG_STREAM("image timestamp: " << oss.str());
+            // ROS_DEBUG_STREAM("image timestamp: " << std::fixed << std::setprecision(9) << img_msg->header.stamp.toSec());
             estimator.processImage(image, img_msg->header);
+            ROS_WARN("After processImage");
 
             double whole_t = t_s.toc();
             printStatistics(estimator, whole_t);
@@ -342,7 +351,9 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "vins_estimator");
     ros::NodeHandle n("~");
-    ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Info);
+    // ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Info);
+    ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Debug);
+    ros::console::notifyLoggerLevelsChanged();
     readParameters(n);
     estimator.setParameter();
 #ifdef EIGEN_DONT_PARALLELIZE

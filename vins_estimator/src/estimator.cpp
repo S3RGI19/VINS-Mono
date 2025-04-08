@@ -1,4 +1,5 @@
 #include "estimator.h"
+#include <fstream>
 
 Estimator::Estimator(): f_manager{Rs}
 {
@@ -146,8 +147,8 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
             Matrix3d calib_ric;
             if (initial_ex_rotation.CalibrationExRotation(corres, pre_integrations[frame_count]->delta_q, calib_ric))
             {
-                ROS_WARN("initial extrinsic rotation calib success");
-                ROS_WARN_STREAM("initial extrinsic rotation: " << endl << calib_ric);
+                // ROS_WARN("initial extrinsic rotation calib success");
+                // ROS_WARN_STREAM("initial extrinsic rotation: " << endl << calib_ric);
                 ric[0] = calib_ric;
                 RIC[0] = calib_ric;
                 ESTIMATE_EXTRINSIC = 1;
@@ -669,6 +670,18 @@ bool Estimator::failureDetection()
 
 void Estimator::optimization()
 {
+    ROS_WARN("Estimator optimization start-------------------------------");
+
+    // static bool csv_initialized = false;
+    // std::ofstream csv_file;
+
+    // if (!csv_initialized) {
+    //     csv_file.open("/tmp/features.csv", std::ios::out);  // overwrite for fresh run
+    //     csv_file << "timestamp,feature_id,x,y,level\n";
+    //     csv_file.close();
+    //     csv_initialized = true;
+    // }
+
     ceres::Problem problem;
     ceres::LossFunction *loss_function;
     //loss_function = new ceres::HuberLoss(1.0);
@@ -678,11 +691,35 @@ void Estimator::optimization()
         ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
         problem.AddParameterBlock(para_Pose[i], SIZE_POSE, local_parameterization);
         problem.AddParameterBlock(para_SpeedBias[i], SIZE_SPEEDBIAS);
+        
+        std::ostringstream pose_msg, speedbias_msg;
+        pose_msg << "pose[" << i << "]: ";
+        speedbias_msg << "speedbias[" << i << "]: ";
+
+        for (int j = 0; j < SIZE_POSE; j++)
+            pose_msg << para_Pose[i][j] << " ";
+
+        for (int j = 0; j < SIZE_SPEEDBIAS; j++)
+            speedbias_msg << para_SpeedBias[i][j] << " ";
+
+        // ROS_DEBUG_STREAM(pose_msg.str());
+        // ROS_DEBUG_STREAM(speedbias_msg.str());
+
+        // ROS_DEBUG_STREAM("pose[" << i << "] " << para_Pose[i][0] << ", " << para_Pose[i][1] << ", " << para_Pose[i][2] << ", " << para_Pose[i][3] << ", " << para_Pose[i][4] << ", " << para_Pose[i][5] << ", " << para_Pose[i][6]);
+        // ROS_DEBUG_STREAM("speedbias[" << i << "] " << para_SpeedBias[i][0] << ", " << para_SpeedBias[i][1] << ", " << para_SpeedBias[i][2] << ", " << para_SpeedBias[i][3] << ", " << para_SpeedBias[i][4] << ", " << para_SpeedBias[i][5] << ", " << para_SpeedBias[i][6] << ", " << para_SpeedBias[i][7] << ", " << para_SpeedBias[i][8]);
     }
     for (int i = 0; i < NUM_OF_CAM; i++)
     {
         ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
         problem.AddParameterBlock(para_Ex_Pose[i], SIZE_POSE, local_parameterization);
+
+
+        std::ostringstream ex_pose_msg;
+        ex_pose_msg << "ex_pose[" << i << "]: ";
+        for (int j = 0; j < SIZE_POSE; j++)
+            ex_pose_msg << para_Ex_Pose[i][j] << " ";
+        // ROS_DEBUG_STREAM(ex_pose_msg.str());
+
         if (!ESTIMATE_EXTRINSIC)
         {
             ROS_DEBUG("fix extinsic param");
@@ -695,6 +732,7 @@ void Estimator::optimization()
     {
         problem.AddParameterBlock(para_Td[0], 1);
         //problem.SetParameterBlockConstant(para_Td[0]);
+        ROS_DEBUG_STREAM("Td " << para_Td[0]);
     }
 
     TicToc t_whole, t_prepare;
@@ -728,7 +766,7 @@ void Estimator::optimization()
 
         int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
         
-        Vector3d pts_i = it_per_id.feature_per_frame[0].point;
+        Vector3d pts_i = it_per_id.feature_per_frame[0].point; // 3d point in camera i frame
 
         for (auto &it_per_frame : it_per_id.feature_per_frame)
         {
@@ -738,12 +776,66 @@ void Estimator::optimization()
                 continue;
             }
             Vector3d pts_j = it_per_frame.point;
+            double timestamp_i = Headers[imu_i].stamp.toSec();
+            double timestamp_j = Headers[imu_j].stamp.toSec();
+
+            std::ostringstream log_msg;
+
             if (ESTIMATE_TD)
             {
                     ProjectionTdFactor *f_td = new ProjectionTdFactor(pts_i, pts_j, it_per_id.feature_per_frame[0].velocity, it_per_frame.velocity,
                                                                      it_per_id.feature_per_frame[0].cur_td, it_per_frame.cur_td,
                                                                      it_per_id.feature_per_frame[0].uv.y(), it_per_frame.uv.y());
                     problem.AddResidualBlock(f_td, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]);
+                    // ROS_DEBUG_STREAM("Image timestamp: " << it_per_id.feature_per_frame[0].img_time.toSec());
+                    
+                    Eigen::Quaterniond Qi(para_Pose[imu_i][6], para_Pose[imu_i][3], para_Pose[imu_i][4], para_Pose[imu_i][5]);  // w, x, y, z
+                    Eigen::Vector3d Pi(para_Pose[imu_i][0], para_Pose[imu_i][1], para_Pose[imu_i][2]);
+
+                    Eigen::Quaterniond Qj(para_Pose[imu_j][6], para_Pose[imu_j][3], para_Pose[imu_j][4], para_Pose[imu_j][5]);  // w, x, y, z
+                    Eigen::Vector3d Pj(para_Pose[imu_j][0], para_Pose[imu_j][1], para_Pose[imu_j][2]);
+
+                    Eigen::Quaterniond qic(para_Ex_Pose[0][6], para_Ex_Pose[0][3], para_Ex_Pose[0][4], para_Ex_Pose[0][5]);
+                    Eigen::Vector3d tic(para_Ex_Pose[0][0], para_Ex_Pose[0][1], para_Ex_Pose[0][2]);
+
+                    double inv_dep_i = para_Feature[feature_index][0];
+                    double td = para_Td[0][0];
+
+                    // Eigen::Vector3d pts_i_td, pts_j_td;
+
+                    // pts_i_td = pts_i - (td - td_i + TR / ROW * row_i) * velocity_i;
+                    // pts_j_td = pts_j - (td - td_j + TR / ROW * row_j) * velocity_j;
+                    
+                    
+                    Eigen::Vector3d pts_camera_i = pts_i/ inv_dep_i;
+                    Eigen::Vector3d pts_imu_i = qic * pts_camera_i + tic;
+                    Eigen::Vector3d pts_world = Qi * pts_imu_i + Pi;
+
+
+                    log_msg << "#timestamp: " << std::fixed << std::setprecision(9) << timestamp_j
+                        << ", feature_id: " << it_per_id.feature_id
+                        << ", x: " << it_per_frame.uv.x()
+                        << ", y: " << it_per_frame.uv.y()
+                        // plot in camera frame i
+                        // << ", landmark: " << para_Feature[feature_index][0]
+                        // << ", " << para_Feature[feature_index][1]
+                        // << ", " << para_Feature[feature_index][2];
+                        // plot in world frame
+                        << ", landmark: " << pts_world[0]
+                        << ", " << pts_world[1]
+                        << ", " << pts_world[2];
+
+                    // << ", level: " << level;
+
+                    // log_msg << "add projection factor with td, feature id[" << it_per_id.feature_id
+                    //     << "] = " << it_per_id.feature_per_frame[0].uv.x()
+                    //     << ", " << it_per_frame.uv.y()
+                    //     << " landmark: " << para_Feature[feature_index][0]
+                    //     << ", " << para_Feature[feature_index][1]
+                    //     << ", " << para_Feature[feature_index][2]
+                    //     << " td: " << *para_Td[0];
+
+                    // ROS_DEBUG_STREAM("add projection factor with td, feature id[" << it_per_id.feature_id << "] = " << it_per_id.feature_per_frame[0].uv.x() << ", " << it_per_frame.uv.y() << " landmark: " << para_Feature[feature_index][0] << ", " << para_Feature[feature_index][1] << ", " << para_Feature[feature_index][2] << " td: " << para_Td[0][0]);
                     /*
                     double **para = new double *[5];
                     para[0] = para_Pose[imu_i];
@@ -758,7 +850,45 @@ void Estimator::optimization()
             {
                 ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
                 problem.AddResidualBlock(f, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]);
+                
+                Eigen::Quaterniond Qi(para_Pose[imu_i][6], para_Pose[imu_i][3], para_Pose[imu_i][4], para_Pose[imu_i][5]);  // w, x, y, z
+                Eigen::Vector3d Pi(para_Pose[imu_i][0], para_Pose[imu_i][1], para_Pose[imu_i][2]);
+                Eigen::Quaterniond qic(para_Ex_Pose[0][6], para_Ex_Pose[0][3], para_Ex_Pose[0][4], para_Ex_Pose[0][5]);
+                Eigen::Vector3d tic(para_Ex_Pose[0][0], para_Ex_Pose[0][1], para_Ex_Pose[0][2]);
+
+
+                // print tic
+                ROS_DEBUG_STREAM("tic: " << tic[0] << ", " << tic[1] << ", " << tic[2]);
+                
+                double inv_dep_i = para_Feature[feature_index][0];
+
+                Eigen::Vector3d pts_camera_i = pts_i / inv_dep_i;
+                Eigen::Vector3d pts_imu_i = qic * pts_camera_i + tic;
+                Eigen::Vector3d pts_world = Qi * pts_imu_i + Pi;
+
+                log_msg << "#timestamp: " << std::fixed << std::setprecision(9) << timestamp_j
+                    << ", feature_id: " << it_per_id.feature_id
+                    << ", x: " << it_per_frame.uv.x()
+                    << ", y: " << it_per_frame.uv.y()
+                    // plot in camera frame i
+                    // << ", landmark: " << para_Feature[feature_index][0]
+                    // << ", " << para_Feature[feature_index][1]
+                    // << ", " << para_Feature[feature_index][2];
+                    // plot in world frame
+                    << ", landmark: " << pts_world[0]
+                    << ", " << pts_world[1]
+                    << ", " << pts_world[2];
+
+                // log_msg << "add projection factor, feature id[" << it_per_id.feature_id
+                // << "] = " << it_per_id.feature_per_frame[0].uv.x()
+                // << ", " << it_per_frame.uv.y()
+                // << " landmark: " << para_Feature[feature_index][0]
+                // << ", " << para_Feature[feature_index][1]
+                // << ", " << para_Feature[feature_index][2];
+    
+                // ROS_DEBUG_STREAM("add projection factor, feature id[" << it_per_id.feature_id << "] = " << it_per_id.feature_per_frame[0].uv.x() << ", " << it_per_frame.uv.y() << " landmark: " << para_Feature[feature_index][0] << ", " << para_Feature[feature_index][1] << ", " << para_Feature[feature_index][2]);
             }
+            ROS_DEBUG_STREAM(log_msg.str());
             f_m_cnt++;
         }
     }
@@ -1000,6 +1130,7 @@ void Estimator::optimization()
     ROS_DEBUG("whole marginalization costs: %f", t_whole_marginalization.toc());
     
     ROS_DEBUG("whole time for ceres: %f", t_whole.toc());
+    ROS_WARN("Estimator optimization finished-------------------------------");
 }
 
 void Estimator::slideWindow()
