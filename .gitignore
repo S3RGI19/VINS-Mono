@@ -10,3 +10,8 @@ test/
 test.launch
 .vscode/
 .catkin_tools
+feature.csv
+features_matched_with_cam0.csv
+landmarks.csv
+debug_log.txt
+odometry_record.bag
