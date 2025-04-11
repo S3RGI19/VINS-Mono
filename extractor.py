@@ -27,7 +27,7 @@ def load_timestamps(file):
 cam0_file_name = '/datasets/euroc/raw/V1_01_easy/mav0/cam0/data.csv'
 cam0_timestamps = load_timestamps(cam0_file_name)
 
-log_file = '/workspaces/debug_log.txt'
+log_file = '/workspaces/VINS-Mono/debug_log.txt'
 # log_file = '/workspaces/src/VINS-Mono/debug.txt'
 feature_csv = 'feature.csv'
 landmark_csv = 'landmarks.csv'
