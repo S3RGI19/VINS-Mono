@@ -25,7 +25,9 @@ RUN   if [ "x$(nproc)" = "x1" ] ; then export USE_PROC=1 ; \
       git checkout tags/${CERES_VERSION} && \
       mkdir build && cd build && \
       cmake .. && \
-      make -j$(USE_PROC) install && \
+      # Limited to 2 threads to avoid OOM
+      # make -j$(USE_PROC) install && \ 
+      make -j1 install && \
       rm -rf ../../ceres-solver && \
       mkdir -p $CATKIN_WS/src/VINS-Mono/
 
@@ -42,7 +44,8 @@ RUN catkin config \
       --extend /opt/ros/$ROS_DISTRO \
       --cmake-args \
         -DCMAKE_BUILD_TYPE=Release && \
-    catkin build && \
+    # catkin build && \
+    echo "# (Build skipped: will run catkin build manually in container)" && \
     sed -i '/exec "$@"/i \
             source "/root/catkin_ws/devel/setup.bash"' /ros_entrypoint.sh
 # add user
