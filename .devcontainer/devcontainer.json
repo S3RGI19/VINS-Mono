@@ -1,0 +1,24 @@
+{
+  "name": "vins-mono-noetic",
+  "context": "..",
+  "dockerFile": "../docker/Dockerfile",
+  "settings": {
+    "terminal.integrated.defaultProfile.linux": "bash"
+  },
+  "remoteUser": "v4rl",
+  "workspaceFolder": "/workspaces/VINS-Mono",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/VINS-Mono,type=bind",
+  "mounts": [
+    "source=${localWorkspaceFolder}/../../datasets,target=/datasets,type=bind"
+  ],
+  "extensions": [
+    "ms-iot.vscode-ros",
+    "ms-python.python",
+    "ms-vscode.cpptools"
+  ],
+  "runArgs": [
+    "--memory=4g",
+    "--memory-swap=4g"
+  ],
+  "postCreateCommand": "bash -c 'source /opt/ros/noetic/setup.bash && echo ROS Noetic sourced'"
+}
