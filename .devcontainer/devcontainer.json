@@ -9,7 +9,8 @@
   "workspaceFolder": "/workspaces/VINS-Mono",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/VINS-Mono,type=bind",
   "mounts": [
-    "source=${localWorkspaceFolder}/../../datasets,target=/datasets,type=bind"
+    "source=${localWorkspaceFolder}/../../datasets,target=/datasets,type=bind",
+    "source=${localWorkspaceFolder}/../../output,target=/workspaces/output,type=bind"
   ],
   "extensions": [
     "ms-iot.vscode-ros",
