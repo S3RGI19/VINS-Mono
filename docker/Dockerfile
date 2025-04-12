@@ -32,7 +32,7 @@ RUN   if [ "x$(nproc)" = "x1" ] ; then export USE_PROC=1 ; \
       mkdir -p $CATKIN_WS/src/VINS-Mono/
 
 # Copy VINS-Mono
-COPY ./ $CATKIN_WS/src/VINS-Mono/
+# COPY ./ $CATKIN_WS/src/VINS-Mono/
 # use the following line if you only have this dockerfile
 # RUN git clone https://github.com/HKUST-Aerial-Robotics/VINS-Mono.git
 
