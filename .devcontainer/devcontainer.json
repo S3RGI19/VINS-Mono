@@ -17,9 +17,5 @@
     "ms-python.python",
     "ms-vscode.cpptools"
   ],
-  "runArgs": [
-    "--memory=4g",
-    "--memory-swap=4g"
-  ],
   "postCreateCommand": "bash -c 'source /opt/ros/noetic/setup.bash && echo ROS Noetic sourced'"
 }
