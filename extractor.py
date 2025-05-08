@@ -83,8 +83,8 @@ with open(landmark_csv, 'w', newline='') as l_csv:
         if data['xyz']:
             writer.writerow([fid, *data['xyz'], data['count']])
 
-print(f"✅ Saved {len(features)} features to {feature_csv}")
-print(f"✅ Saved {sum(1 for d in landmarks.values() if d['xyz'])} landmarks to {landmark_csv}")
+print(f"Saved {len(features)} features to {feature_csv}")
+print(f"Saved {sum(1 for d in landmarks.values() if d['xyz'])} landmarks to {landmark_csv}")
 
 selected_features = []
 
@@ -94,7 +94,7 @@ with open(feature_csv, 'r') as f:
         if row[0] in cam0_timestamps:
             selected_features.append(row)
 
-print(f"✅ Selected {len(selected_features)} features that match cam0 timestamps")
+print(f"Selected {len(selected_features)} features that match cam0 timestamps")
 
 # # Optional: Save to a new CSV
 # with open('features_matched_with_cam0.csv', 'w', newline='') as f_out:
@@ -116,7 +116,7 @@ print(f"✅ Selected {len(selected_features)} features that match cam0 timestamp
 #     for line in f:
 #         if optimization_pattern.search(line):
 #             optimization_count += 1
-# print(f"🧠 Number of 'Estimator optimization start' entries: {optimization_count}")
+# print(f"Number of 'Estimator optimization start' entries: {optimization_count}")
 
 # # load /workspaces/src/hyperion_dev/apps/pose3_features/features.csv
 

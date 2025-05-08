@@ -42,8 +42,8 @@ RUN catkin config \
       --extend /opt/ros/$ROS_DISTRO \
       --cmake-args \
         -DCMAKE_BUILD_TYPE=Release && \
-    catkin build && \
-#     echo "# (Build skipped: will run catkin build manually in container)" && \
+    # catkin build && \
+    echo "# (Build skipped: will run catkin build manually in container)" && \
     sed -i '/exec "$@"/i \
             source "/root/catkin_ws/devel/setup.bash"' /ros_entrypoint.sh
 # add user
