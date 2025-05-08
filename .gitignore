@@ -1,6 +1,5 @@
 *~
 *.rviz
-*.txt
 ex_calib_result.yaml
 vins_result.csv
 iphone.launch
@@ -15,4 +14,5 @@ feature.csv
 features_matched_with_cam0.csv
 landmarks.csv
 debug_log.txt
+debug_log_optimized.txt
 odometry_record.bag
