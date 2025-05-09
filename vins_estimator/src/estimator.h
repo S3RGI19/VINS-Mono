@@ -136,4 +136,13 @@ class Estimator
     Vector3d relo_relative_t;
     Quaterniond relo_relative_q;
     double relo_relative_yaw;
+
+    // Logging file streams
+    std::ofstream poses_file;
+    std::ofstream features_file;
+    std::ofstream reproj_file;
+    std::ofstream landmarks_file;
+    bool logs_initialized = false;
+
+
 };
