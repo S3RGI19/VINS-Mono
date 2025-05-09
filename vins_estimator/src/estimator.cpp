@@ -143,6 +143,12 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
 
         logs_initialized = true;
     }
+
+    ROS_INFO_STREAM("CSV files open status - poses: " << poses_file.is_open()
+                << ", features: " << features_file.is_open()
+                << ", reprojection: " << reproj_file.is_open()
+                << ", landmarks: " << landmarks_file.is_open());
+
     
     ROS_DEBUG("new image coming ------------------------------------------");
     ROS_DEBUG("Adding feature points %lu", image.size());
@@ -283,47 +289,6 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                             << feature_id << "," 
                             << std::setprecision(6) << u << "," << v << "\n";
             
-            // === REPROJECTION ERROR BLOCK (MOVE HERE) ===
-            
-            FeaturePerId *feat = nullptr;
-            for (auto &it_per_id : f_manager.feature)
-            {
-                if (it_per_id.feature_id == feature_id)
-                {
-                    feat = &it_per_id;
-                    break;
-                }
-            }
-            
-            if (feat && feat->estimated_depth > 0)
-            {
-                int anchor_idx = feat->start_frame;
-                Eigen::Vector3d pts_anchor = feat->feature_per_frame[0].point;
-                double inv_depth = feat->estimated_depth;
-                Eigen::Vector3d pt_cam_anchor = pts_anchor / inv_depth;
-                Eigen::Vector3d pt_imu_anchor = ric[0] * pt_cam_anchor + tic[0];
-                Eigen::Matrix3d R_w_anchor = Rs[anchor_idx];
-                Eigen::Vector3d P_w_anchor = Ps[anchor_idx];
-                Eigen::Vector3d pt_w = R_w_anchor * pt_imu_anchor + P_w_anchor;
-            
-                Eigen::Matrix3d R_w_curr = Rs[frame_count];
-                Eigen::Vector3d P_w_curr = Ps[frame_count];
-                Eigen::Vector3d pt_imu_curr = R_w_curr.transpose() * (pt_w - P_w_curr);
-                Eigen::Vector3d pt_cam_curr = R_c_b * (pt_imu_curr - t_b_c);
-                double X = pt_cam_curr.x(), Y = pt_cam_curr.y(), Z = pt_cam_curr.z();
-                if (Z > 0)
-                {
-                    double u_pred = (fx * X / Z) + cx;
-                    double v_pred = (fy * Y / Z) + cy;
-                    double du = u_pred - u;
-                    double dv = v_pred - v;
-                    double reproj_error = sqrt(du*du + dv*dv);
-            
-                    reproj_file << std::fixed << std::setprecision(9) << t << ","
-                                << feature_id << "," 
-                                << std::setprecision(6) << reproj_error << "\n";
-                }
-            }
         }
     }
     ROS_DEBUG("Features logged.");
@@ -594,9 +559,53 @@ void Estimator::solveOdometry()
     {
         TicToc t_tri;
         f_manager.triangulate(Ps, tic, ric);
+        // Debug: Print depths of all features
+        for (const auto &feat : f_manager.feature)
+        {
+            ROS_INFO_STREAM("[solveOdometry] Feature ID: " << feat.feature_id 
+                            << " | Estimated Depth: " << feat.estimated_depth);
+        }
         ROS_DEBUG("triangulation costs %f", t_tri.toc());
         optimization();
     }
+
+    double fx = 461.6, fy = 460.3, cx = 363.0, cy = 248.1;
+    double t = Headers[frame_count].stamp.toSec();
+
+    for (const auto &feat : f_manager.feature)
+    {
+        if (feat.estimated_depth <= 0) continue;
+
+        int anchor_idx = feat.start_frame;
+        Eigen::Vector3d pts_anchor = feat.feature_per_frame[0].point;
+        double inv_depth = feat.estimated_depth;
+        Eigen::Vector3d pt_cam_anchor = pts_anchor / inv_depth;
+        Eigen::Vector3d pt_imu_anchor = ric[0] * pt_cam_anchor + tic[0];
+        Eigen::Matrix3d R_w_anchor = Rs[anchor_idx];
+        Eigen::Vector3d P_w_anchor = Ps[anchor_idx];
+        Eigen::Vector3d pt_w = R_w_anchor * pt_imu_anchor + P_w_anchor;
+
+        Eigen::Matrix3d R_w_curr = Rs[frame_count];
+        Eigen::Vector3d P_w_curr = Ps[frame_count];
+        Eigen::Vector3d pt_imu_curr = R_w_curr.transpose() * (pt_w - P_w_curr);
+        Eigen::Matrix3d R_cb = ric[0].transpose();
+        Eigen::Vector3d t_cb = -R_cb * tic[0];
+        Eigen::Vector3d pt_cam_curr = R_cb * pt_imu_curr + t_cb;
+
+        double X = pt_cam_curr.x(), Y = pt_cam_curr.y(), Z = pt_cam_curr.z();
+        if (Z <= 0) continue;
+
+        double u_pred = (fx * X / Z) + cx;
+        double v_pred = (fy * Y / Z) + cy;
+        double u_obs = feat.feature_per_frame.back().uv.x();
+        double v_obs = feat.feature_per_frame.back().uv.y();
+        double reproj_error = std::hypot(u_pred - u_obs, v_pred - v_obs);
+
+        reproj_file << std::fixed << std::setprecision(9) << t << ","
+                    << feat.feature_id << ","
+                    << std::setprecision(6) << reproj_error << "\n";
+    }
+
 }
 
 void Estimator::vector2double()
@@ -1379,6 +1388,8 @@ void Estimator::slideWindow()
         {
             if (it->start_frame == 0)
             {
+                ROS_INFO_STREAM("Feature ID " << it->feature_id 
+                    << " depth: " << it->estimated_depth);
                 if (it->estimated_depth > 0)
                 {   
                     // Compute world coordinates of this landmark (anchor frame 0 being removed)
