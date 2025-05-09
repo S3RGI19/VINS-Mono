@@ -877,7 +877,7 @@ void Estimator::optimization()
 
 
                 // print tic
-                ROS_DEBUG_STREAM("tic: " << tic[0] << ", " << tic[1] << ", " << tic[2]);
+                // ROS_DEBUG_STREAM("tic: " << tic[0] << ", " << tic[1] << ", " << tic[2]);
                 
                 double inv_dep_i = para_Feature[feature_index][0];
 
@@ -927,8 +927,8 @@ void Estimator::optimization()
         }
     }
 
-    ROS_DEBUG("visual measurement count: %d", f_m_cnt);
-    ROS_DEBUG("prepare for ceres: %f", t_prepare.toc());
+    // ROS_DEBUG("visual measurement count: %d", f_m_cnt);
+    // ROS_DEBUG("prepare for ceres: %f", t_prepare.toc());
 
     if(relocalization_info)
     {
