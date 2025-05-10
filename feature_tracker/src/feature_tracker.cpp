@@ -31,6 +31,10 @@ void reduceVector(vector<int> &v, vector<uchar> status)
 
 FeatureTracker::FeatureTracker()
 {
+    std::ofstream feature_log_init("/datasets/vins_logging/features.csv");
+    feature_log_init << "timestamp,feature_id,u,v\n";
+    feature_log_init.close();
+
 }
 
 void FeatureTracker::setMask()
@@ -163,6 +167,25 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
     cur_img = forw_img;
     cur_pts = forw_pts;
     undistortedPoints();
+
+    // === LOG FEATURE TRACKS TO CSV ===
+    std::ofstream feature_log("/datasets/vins_logging/features.csv", std::ios::app);
+    for (size_t i = 0; i < ids.size(); ++i)
+    {
+        if (track_cnt[i] >= 2) // Only log stable features
+        {
+            // Convert timestamp to nanoseconds
+            long long timestamp_ns = static_cast<long long>(cur_time * 1e9);
+            feature_log << std::fixed << std::setprecision(9)
+                        << timestamp_ns << ","       // timestamp
+                        << ids[i] << ","         // feature ID
+                        << cur_pts[i].x << ","   // pixel u
+                        << cur_pts[i].y << "\n"; // pixel v
+        }
+    }
+    feature_log.close();
+    // === END LOGGING ===
+
     prev_time = cur_time;
 }
 

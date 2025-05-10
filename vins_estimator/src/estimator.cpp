@@ -5,6 +5,16 @@ Estimator::Estimator(): f_manager{Rs}
 {
     ROS_INFO("init begins");
     clearState();
+
+    std::ofstream landmark_log_init("/datasets/vins_logging/landmarks.csv");
+    landmark_log_init << "timestamp,feature_id,x,y,z\n";
+    landmark_log_init.close();
+
+    std::ofstream pose_log_init("/datasets/vins_logging/poses.csv");
+    pose_log_init << "timestamp,x,y,z,qw,qx,qy,qz\n";
+    pose_log_init.close();
+
+
 }
 
 void Estimator::setParameter()
@@ -481,6 +491,55 @@ void Estimator::solveOdometry()
         f_manager.triangulate(Ps, tic, ric);
         ROS_DEBUG("triangulation costs %f", t_tri.toc());
         optimization();
+        
+        // LANDMARK LOGGING
+        std::ofstream landmark_log("/datasets/vins_logging/landmarks.csv", std::ios::app);
+
+        for (const auto& it_per_id : f_manager.feature)
+        {
+            if (it_per_id.solve_flag == 1 && it_per_id.estimated_depth > 0)
+            {
+                int cam_idx = 0; // assuming monocular camera
+                int frame_idx = it_per_id.start_frame;
+
+                // Get the normalized point in camera frame
+                const Vector3d& pt_norm = it_per_id.feature_per_frame[0].point;
+
+                // Convert to 3D point in camera frame
+                Vector3d pt_cam = it_per_id.estimated_depth * pt_norm;
+
+                // Transform to world frame
+                Vector3d pt_world = Rs[frame_idx] * (ric[cam_idx] * pt_cam + tic[cam_idx]) + Ps[frame_idx];
+
+                // Convert timestamp to nanoseconds
+                long long timestamp_ns = static_cast<long long>(Headers[WINDOW_SIZE].stamp.toSec() * 1e9);
+
+                landmark_log << timestamp_ns << ","
+                            << it_per_id.feature_id << ","
+                            << pt_world.x() << "," << pt_world.y() << "," << pt_world.z() << "\n";
+            }
+        }
+
+        landmark_log.close();
+
+
+        // POSE LOGGING
+        std::ofstream pose_log("/datasets/vins_logging/poses.csv", std::ios::app);
+        for (int i = 0; i <= WINDOW_SIZE; i++) {
+            const double timestamp = Headers[i].stamp.toSec();
+            const Vector3d& t = Ps[i];
+            const Matrix3d& R = Rs[i];
+            Eigen::Quaterniond q(R);
+
+            pose_log << std::fixed << std::setprecision(9)
+                    << timestamp << ","
+                    << t.x() << "," << t.y() << "," << t.z() << ","
+                    << q.w() << "," << q.x() << "," << q.y() << "," << q.z()
+                    << "\n";
+        }
+        pose_log.close();
+
+
     }
 }
 
@@ -779,9 +838,6 @@ void Estimator::optimization()
             double timestamp_i = Headers[imu_i].stamp.toSec();
             double timestamp_j = Headers[imu_j].stamp.toSec();
 
-            std::ostringstream log_msg;
-            std::ofstream log_file("/workspaces/VINS-Mono/debug_log.txt", std::ios::app);
-
             if (ESTIMATE_TD)
             {
                     ProjectionTdFactor *f_td = new ProjectionTdFactor(pts_i, pts_j, it_per_id.feature_per_frame[0].velocity, it_per_frame.velocity,
@@ -790,139 +846,15 @@ void Estimator::optimization()
                     problem.AddResidualBlock(f_td, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]);
                     // ROS_DEBUG_STREAM("Image timestamp: " << it_per_id.feature_per_frame[0].img_time.toSec());
                     
-                    Eigen::Quaterniond Qi(para_Pose[imu_i][6], para_Pose[imu_i][3], para_Pose[imu_i][4], para_Pose[imu_i][5]);  // w, x, y, z
-                    Eigen::Vector3d Pi(para_Pose[imu_i][0], para_Pose[imu_i][1], para_Pose[imu_i][2]);
-
-                    Eigen::Quaterniond Qj(para_Pose[imu_j][6], para_Pose[imu_j][3], para_Pose[imu_j][4], para_Pose[imu_j][5]);  // w, x, y, z
-                    Eigen::Vector3d Pj(para_Pose[imu_j][0], para_Pose[imu_j][1], para_Pose[imu_j][2]);
-
-                    Eigen::Quaterniond qic(para_Ex_Pose[0][6], para_Ex_Pose[0][3], para_Ex_Pose[0][4], para_Ex_Pose[0][5]);
-                    Eigen::Vector3d tic(para_Ex_Pose[0][0], para_Ex_Pose[0][1], para_Ex_Pose[0][2]);
-
-                    double inv_dep_i = para_Feature[feature_index][0];
-                    double td = para_Td[0][0];
-
-                    // Eigen::Vector3d pts_i_td, pts_j_td;
-
-                    // pts_i_td = pts_i - (td - td_i + TR / ROW * row_i) * velocity_i;
-                    // pts_j_td = pts_j - (td - td_j + TR / ROW * row_j) * velocity_j;
-                    
-                    
-                    Eigen::Vector3d pts_camera_i = pts_i/ inv_dep_i;
-                    Eigen::Vector3d pts_imu_i = qic * pts_camera_i + tic;
-                    Eigen::Vector3d pts_world = Qi * pts_imu_i + Pi;
-
-                    // Project pts_world into camera frame of imu_j
-                    Matrix3d R_wb_j = Qj.toRotationMatrix();  // imu_j world-to-body
-                    Vector3d P_wb_j = Pj;
-                    Matrix3d R_cb = qic.inverse().toRotationMatrix(); // camera-to-IMU
-                    Vector3d t_cb = -R_cb * tic; // camera w.r.t IMU
-
-                    Vector3d pt_cam_j = R_cb * (R_wb_j.transpose() * (pts_world - P_wb_j)) + t_cb;
-                    double fx = 461.6, fy = 460.3, cx = 363.0, cy = 248.1;
-                    double u_proj = fx * pt_cam_j.x() / pt_cam_j.z() + cx;
-                    double v_proj = fy * pt_cam_j.y() / pt_cam_j.z() + cy;
-
-                    double reproj_error = std::hypot(u_proj - it_per_frame.uv.x(), v_proj - it_per_frame.uv.y());
-
-
-
-                    log_file << "#timestamp: " << std::fixed << std::setprecision(9) << timestamp_j
-                        << ", feature_id: " << it_per_id.feature_id
-                        << ", x: " << it_per_frame.uv.x()
-                        << ", y: " << it_per_frame.uv.y()
-                        // plot in camera frame i
-                        // << ", landmark: " << para_Feature[feature_index][0]
-                        // << ", " << para_Feature[feature_index][1]
-                        // << ", " << para_Feature[feature_index][2];
-                        // plot in world frame
-                        << ", landmark: " << pts_world[0]
-                        << ", " << pts_world[1]
-                        << ", " << pts_world[2]
-                        << ", reproj_error: " << reproj_error << std::endl;;
-
-                    // << ", level: " << level;
-
-                    // log_msg << "add projection factor with td, feature id[" << it_per_id.feature_id
-                    //     << "] = " << it_per_id.feature_per_frame[0].uv.x()
-                    //     << ", " << it_per_frame.uv.y()
-                    //     << " landmark: " << para_Feature[feature_index][0]
-                    //     << ", " << para_Feature[feature_index][1]
-                    //     << ", " << para_Feature[feature_index][2]
-                    //     << " td: " << *para_Td[0];
-
-                    // ROS_DEBUG_STREAM("add projection factor with td, feature id[" << it_per_id.feature_id << "] = " << it_per_id.feature_per_frame[0].uv.x() << ", " << it_per_frame.uv.y() << " landmark: " << para_Feature[feature_index][0] << ", " << para_Feature[feature_index][1] << ", " << para_Feature[feature_index][2] << " td: " << para_Td[0][0]);
-                    /*
-                    double **para = new double *[5];
-                    para[0] = para_Pose[imu_i];
-                    para[1] = para_Pose[imu_j];
-                    para[2] = para_Ex_Pose[0];
-                    para[3] = para_Feature[feature_index];
-                    para[4] = para_Td[0];
-                    f_td->check(para);
-                    */
             }
             else
             {
                 ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
                 problem.AddResidualBlock(f, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]);
                 
-                Eigen::Quaterniond Qi(para_Pose[imu_i][6], para_Pose[imu_i][3], para_Pose[imu_i][4], para_Pose[imu_i][5]);
-                Eigen::Vector3d Pi(para_Pose[imu_i][0], para_Pose[imu_i][1], para_Pose[imu_i][2]);
-                Eigen::Quaterniond Qj(para_Pose[imu_j][6], para_Pose[imu_j][3], para_Pose[imu_j][4], para_Pose[imu_j][5]);
-                Eigen::Vector3d Pj(para_Pose[imu_j][0], para_Pose[imu_j][1], para_Pose[imu_j][2]);
-                Eigen::Quaterniond qic(para_Ex_Pose[0][6], para_Ex_Pose[0][3], para_Ex_Pose[0][4], para_Ex_Pose[0][5]);
-                Eigen::Vector3d tic(para_Ex_Pose[0][0], para_Ex_Pose[0][1], para_Ex_Pose[0][2]);
-
-
-
-                // print tic
-                // ROS_DEBUG_STREAM("tic: " << tic[0] << ", " << tic[1] << ", " << tic[2]);
                 
-                double inv_dep_i = para_Feature[feature_index][0];
-
-                Eigen::Vector3d pts_camera_i = pts_i / inv_dep_i;
-                Eigen::Vector3d pts_imu_i = qic * pts_camera_i + tic;
-                Eigen::Vector3d pts_world = Qi * pts_imu_i + Pi;
-
-                // Project pts_world into camera frame of imu_j
-                Matrix3d R_wb_j = Qj.toRotationMatrix();  // imu_j world-to-body
-                Vector3d P_wb_j = Pj;
-                Matrix3d R_cb = qic.inverse().toRotationMatrix(); // camera-to-IMU
-                Vector3d t_cb = -R_cb * tic; // camera w.r.t IMU
-
-                Vector3d pt_cam_j = R_cb * (R_wb_j.transpose() * (pts_world - P_wb_j)) + t_cb;
-                double fx = 461.6, fy = 460.3, cx = 363.0, cy = 248.1;
-                double u_proj = fx * pt_cam_j.x() / pt_cam_j.z() + cx;
-                double v_proj = fy * pt_cam_j.y() / pt_cam_j.z() + cy;
-
-                double reproj_error = std::hypot(u_proj - it_per_frame.uv.x(), v_proj - it_per_frame.uv.y());
-
-
-                log_file << "#timestamp: " << std::fixed << std::setprecision(9) << timestamp_j
-                    << ", feature_id: " << it_per_id.feature_id
-                    << ", x: " << it_per_frame.uv.x()
-                    << ", y: " << it_per_frame.uv.y()
-                    // plot in camera frame i
-                    // << ", landmark: " << para_Feature[feature_index][0]
-                    // << ", " << para_Feature[feature_index][1]
-                    // << ", " << para_Feature[feature_index][2];
-                    // plot in world frame
-                    << ", landmark: " << pts_world[0]
-                    << ", " << pts_world[1]
-                    << ", " << pts_world[2] 
-                    << ", reproj_error: " << reproj_error << std::endl;
-
-                // log_msg << "add projection factor, feature id[" << it_per_id.feature_id
-                // << "] = " << it_per_id.feature_per_frame[0].uv.x()
-                // << ", " << it_per_frame.uv.y()
-                // << " landmark: " << para_Feature[feature_index][0]
-                // << ", " << para_Feature[feature_index][1]
-                // << ", " << para_Feature[feature_index][2];
-    
                 // ROS_DEBUG_STREAM("add projection factor, feature id[" << it_per_id.feature_id << "] = " << it_per_id.feature_per_frame[0].uv.x() << ", " << it_per_frame.uv.y() << " landmark: " << para_Feature[feature_index][0] << ", " << para_Feature[feature_index][1] << ", " << para_Feature[feature_index][2]);
             }
-            ROS_DEBUG_STREAM(log_msg.str());
             f_m_cnt++;
         }
     }
@@ -987,86 +919,6 @@ void Estimator::optimization()
     ROS_DEBUG("ceres final cost: %f", summary.final_cost);
 
     double2vector();
-
-    // ===== FINAL LOGGING AFTER OPTIMIZATION =====
-    // Re-triangulate landmarks using updated poses
-    f_manager.triangulate(Ps, tic, ric);
-
-    std::ofstream final_log_file("/workspaces/VINS-Mono/debug_log_optimized.txt", std::ios::app);
-    if (final_log_file.is_open())
-    {
-        for (auto &it_per_id : f_manager.feature)
-        {
-            if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
-                continue;
-
-            int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
-            Vector3d pts_i = it_per_id.feature_per_frame[0].point;
-
-            double inv_depth = it_per_id.estimated_depth;
-            if (inv_depth <= 0)
-                continue;
-
-            Vector3d pt_cam = pts_i / inv_depth;
-
-            // Transform to IMU frame
-            Vector3d tic_ = tic[0];
-            Matrix3d ric_ = ric[0];
-            Vector3d pt_imu = ric_ * pt_cam + tic_;
-
-            // Transform to world frame
-            Matrix3d R_wb = Rs[imu_i];
-            Vector3d P_wb = Ps[imu_i];
-            Vector3d pt_w = R_wb * pt_imu + P_wb;
-
-            
-            for (const auto &it_per_frame : it_per_id.feature_per_frame)
-            {
-                imu_j++;
-                double timestamp_j = Headers[imu_j].stamp.toSec();
-                Vector2d uv = it_per_frame.uv;
-
-                // === Projection ===
-                // Project
-                double fx = 461.6;
-                double fy = 460.3;
-                double cx = 363.0;
-                double cy = 248.1;
-
-                // Project from world to camera_j frame
-                Matrix3d R_wb_j = Rs[imu_j];
-                Vector3d P_wb_j = Ps[imu_j];
-                Matrix3d R_cb = ric[0].transpose();
-                Vector3d t_cb = -R_cb * tic[0];
-
-                Vector3d pt_cam_j = R_cb * (R_wb_j.transpose() * (pt_w - P_wb_j)) + t_cb;
-
-                // Projection
-                double u_proj = fx * pt_cam_j.x() / pt_cam_j.z() + cx;
-                double v_proj = fy * pt_cam_j.y() / pt_cam_j.z() + cy;
-
-                double reproj_error = std::hypot(u_proj - uv.x(), v_proj - uv.y());
-                            
-                final_log_file << "#timestamp: " << std::fixed << std::setprecision(9) << timestamp_j
-                << ", feature_id: " << it_per_id.feature_id
-                << ", x: " << uv.x()
-                << ", y: " << uv.y()
-                << ", landmark: " << pt_w[0]
-                << ", " << pt_w[1]
-                << ", " << pt_w[2]
-                << ", reproj_error: " << reproj_error << std::endl;
-
-                
-            }
-        }
-        final_log_file.close();
-        ROS_INFO("Final optimized features and landmarks logged to /workspaces/VINS-Mono/VINS-Mono/debug_log_final.txt");
-    }
-    else
-    {
-        ROS_WARN("Could not open /workspaces/VINS-Mono/VINS-Mono/debug_log_final.txt for writing.");
-    }
-
 
     TicToc t_whole_marginalization;
     if (marginalization_flag == MARGIN_OLD)
