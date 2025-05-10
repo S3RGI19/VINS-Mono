@@ -7,6 +7,12 @@ from scipy.spatial.transform import Rotation as R
 fx, fy = 458.654, 457.296
 cx, cy = 367.215, 248.375
 
+# --- Distortion coefficients ---
+k1 = -0.2917
+k2 = 0.08228
+p1 = 5.333e-05
+p2 = -1.578e-04
+
 # --- Extrinsics: T_BC (from body to camera) ---
 R_BC = np.array([
     [ 0.01486554, -0.99988093,  0.0041403 ],
@@ -30,27 +36,31 @@ def find_closest_pose(ts):
     idx = np.abs(pose_timestamps - ts).argmin()
     return poses_sorted.iloc[idx]
 
-def distort_points(u, v, fx, fy, cx, cy, k1, k2, p1, p2):
-    # Normalize image coordinates
-    x = (u - cx) / fx
-    y = (v - cy) / fy
+# --- Undistortion using iterative Newton method (OpenCV-style) ---
+def undistort_pixel(u, v, fx, fy, cx, cy, k1, k2, p1, p2, max_iter=5):
+    x_dist = (u - cx) / fx
+    y_dist = (v - cy) / fy
+    x, y = x_dist, y_dist  # initial guess
 
-    r2 = x**2 + y**2
-    x_dist = x * (1 + k1*r2 + k2*r2**2) + 2*p1*x*y + p2*(r2 + 2*x**2)
-    y_dist = y * (1 + k1*r2 + k2*r2**2) + p1*(r2 + 2*y**2) + 2*p2*x*y
+    for _ in range(max_iter):
+        r2 = x**2 + y**2
+        radial = 1 + k1*r2 + k2*r2**2
+        dx = 2*p1*x*y + p2*(r2 + 2*x**2)
+        dy = p1*(r2 + 2*y**2) + 2*p2*x*y
 
-    # Back to pixel coordinates
-    u_dist = fx * x_dist + cx
-    v_dist = fy * y_dist + cy
-    return u_dist, v_dist
+        x = (x_dist - dx) / radial
+        y = (y_dist - dy) / radial
 
+    u_undist = fx * x + cx
+    v_undist = fy * y + cy
+    return u_undist, v_undist
 
 # --- Compute reprojection errors ---
 results = []
 for _, row in features.iterrows():
     ts = row['timestamp']
     fid = row['feature_id']
-    fx_obs, fy_obs = row['u'], row['v']
+    u_obs, v_obs = row['u'], row['v']
 
     if fid not in landmark_dict:
         continue
@@ -73,9 +83,15 @@ for _, row in features.iterrows():
     if pc[2] <= 0:
         continue
 
-    u = fx * pc[0] / pc[2] + cx
-    v = fy * pc[1] / pc[2] + cy
-    error = np.sqrt((u - fx_obs) ** 2 + (v - fy_obs) ** 2)
+    # --- Project to pixel (undistorted) ---
+    u_proj = fx * pc[0] / pc[2] + cx
+    v_proj = fy * pc[1] / pc[2] + cy
+
+    # --- Undistort the observed pixel ---
+    u_undist, v_undist = undistort_pixel(u_obs, v_obs, fx, fy, cx, cy, k1, k2, p1, p2)
+
+    # --- Compute reprojection error ---
+    error = np.sqrt((u_proj - u_undist)**2 + (v_proj - v_undist)**2)
 
     results.append({'timestamp': ts, 'feature_id': fid, 'reprojection_error': error})
 
@@ -91,9 +107,9 @@ print("Num total observations:", len(reproj_df))
 
 # --- Histogram (clipped) ---
 plt.figure(figsize=(8, 4))
-clipped_errors = reproj_df[reproj_df['reprojection_error'] < 100]['reprojection_error']
+clipped_errors = reproj_df[reproj_df['reprojection_error'] < 50]['reprojection_error']
 plt.hist(clipped_errors, bins=100, color='steelblue', edgecolor='black')
-plt.title('Reprojection Error Histogram (<100 px)')
+plt.title('Reprojection Error Histogram (<50 px)')
 plt.xlabel('Reprojection Error (px)')
 plt.ylabel('Count')
 plt.grid(True)
@@ -114,7 +130,7 @@ plt.show()
 
 # --- Error across image plane ---
 features_with_error = features.merge(reproj_df, on=['timestamp', 'feature_id'])
-features_clipped = features_with_error[features_with_error['reprojection_error'] < 100]
+features_clipped = features_with_error[features_with_error['reprojection_error'] < 50]
 
 plt.figure(figsize=(8, 6))
 sc = plt.scatter(
@@ -124,7 +140,7 @@ sc = plt.scatter(
 )
 plt.gca().invert_yaxis()
 plt.colorbar(sc, label='Reprojection Error (px)')
-plt.title('Reprojection Error Across Image Plane (<100 px)')
+plt.title('Reprojection Error Across Image Plane (<50 px)')
 plt.xlabel('u (pixels)')
 plt.ylabel('v (pixels)')
 plt.grid(True)
@@ -132,9 +148,8 @@ plt.tight_layout()
 plt.savefig('/datasets/vins_logging/reproj_error_image_plane.png')
 plt.show()
 
+# --- Percentile plots ---
 import matplotlib.cm as cm
-
-# --- Percentile binning ---
 percentiles = [0, 20, 40, 60, 80, 100]
 percentile_vals = np.percentile(features_with_error['reprojection_error'], percentiles)
 
